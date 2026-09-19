@@ -3,783 +3,519 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Folleto Digital - UPTPC</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <title>Visor PDF con carga progresiva</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
         body {
-            font-family: 'Inter', -apple-system, sans-serif;
-            background: #0f172a;
-            background-image:
-                radial-gradient(ellipse at 20% 50%, rgba(56, 189, 248, 0.08) 0%, transparent 50%),
-                radial-gradient(ellipse at 80% 80%, rgba(139, 92, 246, 0.06) 0%, transparent 50%);
+            font-family: Arial, sans-serif;
+            background: #2c3e50;
             min-height: 100vh;
             display: flex;
             justify-content: center;
             align-items: center;
             padding: 20px;
-            overflow: hidden;
         }
-
-        /* ─── Contenedor principal ─── */
+        
         .container {
-            background: rgba(30, 41, 59, 0.55);
-            backdrop-filter: blur(24px);
-            -webkit-backdrop-filter: blur(24px);
-            border: 1px solid rgba(255, 255, 255, 0.07);
-            border-radius: 18px;
-            padding: 28px;
-            box-shadow:
-                0 30px 70px rgba(0, 0, 0, 0.55),
-                0 0 0 1px rgba(255, 255, 255, 0.03) inset;
-            max-width: 100%;
+            background: #34495e;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
         }
-
-        /* ─── Flipbook ─── */
+        
+        .flipbook-wrapper {
+            position: relative;
+            width: 800px;
+            margin: 0 auto;
+        }
+        
         #flipbook {
             width: 800px;
             height: 500px;
-            margin: 0 auto;
-            background: #e2e8f0;
-            border-radius: 6px;
+            background: #ecf0f1;
+            border-radius: 5px;
             overflow: hidden;
-            box-shadow:
-                0 12px 40px rgba(0, 0, 0, 0.55),
-                0 0 0 1px rgba(0, 0, 0, 0.15);
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
             position: relative;
             cursor: pointer;
+            user-select: none;
         }
-
-        /*
-         * SIN transform ni transition en .turn-page
-         * para no interferir con las matrices 3D internas de turn.js
-         */
+        
         .turn-page {
             background-color: white;
+            border: 1px solid #bdc3c7;
             overflow: hidden;
             position: relative;
         }
-
-        /* Indicadores de hover - overlays visuales */
+        
+        .turn-page.page-loading { background: #f8f9fa; }
+        
+        .turn-page.page-loading::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(100deg, transparent 30%, rgba(52,152,219,0.12) 50%, transparent 70%);
+            background-size: 200% 100%;
+            animation: shimmer 1.4s infinite;
+        }
+        
+        @keyframes shimmer {
+            0%   { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+        
         .hover-indicator {
             position: absolute;
             top: 0;
             width: 60px;
             height: 100%;
             pointer-events: none;
-            z-index: 1000;
+            z-index: 9999;
             opacity: 0;
-            transition: opacity 0.25s ease;
+            transition: opacity 0.2s ease;
         }
-
+        
         .hover-indicator.left {
             left: 0;
-            background: linear-gradient(to right, rgba(56, 189, 248, 0.2), transparent);
+            background: linear-gradient(to right, rgba(52, 152, 219, 0.35), transparent);
         }
-
+        
         .hover-indicator.right {
             right: 0;
-            background: linear-gradient(to left, rgba(56, 189, 248, 0.2), transparent);
+            background: linear-gradient(to left, rgba(52, 152, 219, 0.35), transparent);
         }
-
-        #flipbook.hover-left .hover-indicator.left,
-        #flipbook.hover-right .hover-indicator.right {
+        
+        .flipbook-wrapper.hover-left .hover-indicator.left,
+        .flipbook-wrapper.hover-right .hover-indicator.right {
             opacity: 1;
         }
-
+        
+        .flipbook-wrapper.hover-left #flipbook { cursor: w-resize; }
+        .flipbook-wrapper.hover-right #flipbook { cursor: e-resize; }
+        
         .pdf-page {
             width: 100%;
             height: 100%;
             object-fit: contain;
-            display: block;
-            user-select: none;
+            pointer-events: none;
             -webkit-user-drag: none;
         }
-
-        /* Placeholder de página mientras carga bajo demanda */
-        .page-loading-placeholder {
-            width: 100%;
-            height: 100%;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            background: #f8fafc;
-            color: #94a3b8;
-            font-size: 13px;
-            font-weight: 500;
-            gap: 8px;
-        }
-
-        .page-loading-placeholder .spinner {
-            width: 26px;
-            height: 26px;
-            border: 3px solid #e2e8f0;
-            border-top-color: #38bdf8;
-            border-radius: 50%;
-            animation: spin 0.7s linear infinite;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        /* ─── Controles ─── */
+        
         .controls {
             display: flex;
             justify-content: center;
-            gap: 16px;
-            margin-top: 22px;
+            gap: 15px;
+            margin-top: 20px;
         }
-
+        
         button {
-            padding: 12px 28px;
-            font-family: 'Inter', sans-serif;
-            font-size: 14px;
-            font-weight: 600;
+            padding: 12px 25px;
+            font-size: 16px;
             cursor: pointer;
+            background: #3498db;
             color: white;
             border: none;
-            border-radius: 10px;
-            background: linear-gradient(135deg, #3b82f6, #2563eb);
-            box-shadow:
-                0 4px 14px rgba(37, 99, 235, 0.35),
-                0 1px 3px rgba(0, 0, 0, 0.12);
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            letter-spacing: 0.3px;
-            user-select: none;
+            border-radius: 5px;
+            transition: background 0.3s, transform 0.2s;
+            font-weight: bold;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
         }
-
-        button:hover:not(:disabled) {
-            background: linear-gradient(135deg, #60a5fa, #3b82f6);
-            transform: translateY(-2px);
-            box-shadow:
-                0 8px 22px rgba(37, 99, 235, 0.45),
-                0 2px 6px rgba(0, 0, 0, 0.15);
-        }
-
-        button:active:not(:disabled) {
-            transform: translateY(0);
-            box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
-        }
-
+        
+        button:hover { background: #2980b9; transform: translateY(-2px); }
+        button:active { transform: translateY(0); }
         button:disabled {
-            background: rgba(100, 116, 139, 0.4);
-            color: rgba(255, 255, 255, 0.4);
+            background: #95a5a6;
             cursor: not-allowed;
             transform: none;
             box-shadow: none;
         }
-
+        
         .page-info {
-            color: rgba(255, 255, 255, 0.7);
+            color: white;
             text-align: center;
-            margin-top: 16px;
-            font-size: 14px;
-            font-weight: 500;
-            letter-spacing: 0.4px;
+            margin-top: 15px;
+            font-size: 16px;
         }
-
-        .page-info span {
-            color: rgba(255, 255, 255, 0.95);
-            font-weight: 700;
-        }
-
-        /* ─── Overlay de progreso de descarga (1% → 100%) ─── */
-        .progress-overlay {
-            position: fixed;
-            inset: 0;
-            background: rgba(15, 23, 42, 0.94);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
-            z-index: 9999;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 24px;
-            transition: opacity 0.4s ease, visibility 0.4s ease;
-        }
-
-        .progress-overlay.hidden {
-            opacity: 0;
-            visibility: hidden;
-            pointer-events: none;
-        }
-
-        .progress-card {
-            background: rgba(30, 41, 59, 0.7);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 20px;
-            padding: 36px 40px;
-            width: 100%;
-            max-width: 420px;
+        
+        .render-status {
+            margin-top: 12px;
             text-align: center;
-            box-shadow:
-                0 30px 60px rgba(0, 0, 0, 0.6),
-                0 0 80px rgba(56, 189, 248, 0.08);
+            color: #bdc3c7;
+            font-size: 13px;
         }
-
-        .progress-emoji {
-            font-size: 2.4rem;
-            margin-bottom: 16px;
-            display: inline-block;
-            animation: float 2.5s ease-in-out infinite;
-        }
-
-        @keyframes float {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-6px); }
-        }
-
-        .progress-title {
-            font-size: 1.2rem;
-            font-weight: 700;
-            color: #f1f5f9;
-            margin-bottom: 6px;
-        }
-
-        .progress-subtitle {
-            font-size: 0.82rem;
-            color: #64748b;
-            margin-bottom: 24px;
-            min-height: 1.2em;
-        }
-
-        .progress-bar-track {
-            width: 100%;
-            height: 10px;
-            background: rgba(255, 255, 255, 0.07);
-            border-radius: 20px;
+        
+        .render-bar {
+            width: 240px;
+            height: 4px;
+            background: rgba(255,255,255,0.15);
+            border-radius: 2px;
+            margin: 6px auto 0;
             overflow: hidden;
-            margin-bottom: 14px;
-            border: 1px solid rgba(255, 255, 255, 0.05);
         }
-
-        .progress-bar-fill {
+        
+        .render-bar > div {
             height: 100%;
             width: 0%;
-            border-radius: 20px;
-            background: linear-gradient(90deg, #38bdf8, #818cf8, #a78bfa);
-            background-size: 200% 100%;
-            animation: shimmer 2.5s ease infinite;
-            transition: width 0.2s cubic-bezier(0.1, 0.7, 0.1, 1);
+            background: #3498db;
+            border-radius: 2px;
+            transition: width 0.3s;
         }
-
-        @keyframes shimmer {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-        }
-
-        .progress-stats {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 0.82rem;
-            color: #64748b;
-            font-weight: 500;
-        }
-
-        .progress-percent-value {
-            font-size: 1.05rem;
-            font-weight: 700;
-            color: #38bdf8;
-        }
-
-        .progress-cached-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            background: rgba(34, 197, 94, 0.12);
-            color: #4ade80;
-            border: 1px solid rgba(34, 197, 94, 0.2);
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.78rem;
-            font-weight: 600;
-            margin-top: 14px;
-        }
-
-        .progress-error {
-            color: #f87171;
-            background: rgba(248, 113, 113, 0.1);
-            border: 1px solid rgba(248, 113, 113, 0.2);
-            border-radius: 10px;
-            padding: 12px;
-            margin-top: 14px;
-            font-size: 0.82rem;
-        }
-
-        /* Responsive */
-        @media (max-width: 880px) {
-            .container {
-                padding: 16px;
-                border-radius: 12px;
-            }
-            #flipbook {
-                width: 100%;
-                height: auto;
-                aspect-ratio: 8 / 5;
-            }
+        
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 15px 30px;
+            border-radius: 5px;
+            z-index: 1000;
         }
     </style>
-
-    <!-- Librerías -->
-    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/turn.js/3/turn.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
 </head>
 <body>
-
-    <!-- Overlay de progreso de descarga -->
-    <div class="progress-overlay" id="progressOverlay">
-        <div class="progress-card">
-            <div class="progress-emoji">📘</div>
-            <div class="progress-title" id="progressTitle">Descargando folleto…</div>
-            <div class="progress-subtitle" id="progressSubtitle">Conectando con el archivo PDF…</div>
-            <div class="progress-bar-track">
-                <div class="progress-bar-fill" id="progressFill"></div>
-            </div>
-            <div class="progress-stats">
-                <span id="progressBytes">0 MB / 0 MB</span>
-                <span class="progress-percent-value" id="progressPercent">0%</span>
-            </div>
-        </div>
-    </div>
-
-    <!-- Estructura visual original conservada -->
     <div class="container">
-        <div id="flipbook">
+        <div class="flipbook-wrapper">
+            <div id="flipbook">
+                <div class="loading">Cargando PDF...</div>
+            </div>
             <div class="hover-indicator left"></div>
             <div class="hover-indicator right"></div>
         </div>
-
+        
         <div class="controls">
             <button id="prev-page" disabled>← Anterior</button>
             <button id="next-page" disabled>Siguiente →</button>
         </div>
-
+        
+        <div class="render-status" id="render-status">
+            <span id="render-text">Preparando...</span>
+            <div class="render-bar"><div id="render-fill"></div></div>
+        </div>
+        
         <div class="page-info" id="page-info">
-            Página <span id="current-page-display">1</span> de <span id="total-pages">0</span>
+            Página 1 de <span id="total-pages">0</span>
         </div>
     </div>
 
     <script>
-    (function() {
-        'use strict';
-
-        // ─── Configuración de PDF.js Worker (Anti-CORS Blob URL) ───
-        const WORKER_CDN_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
-        try {
-            fetch(WORKER_CDN_URL)
-                .then(res => res.text())
-                .then(scriptText => {
-                    const blob = new Blob([scriptText], { type: 'application/javascript' });
-                    pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(blob);
-                })
-                .catch(() => {
-                    pdfjsLib.GlobalWorkerOptions.workerSrc = WORKER_CDN_URL;
+        $(document).ready(function() {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+            
+            const pdfUrl = 'https://pub-1a8a6736c07b4083b58438c05d3c94b6.r2.dev/archivo_comprimido.pdf';
+            
+            let pageCount = 0;
+            let currentPage = 1;
+            let flipbookInitialized = false;
+            let isTurning = false;
+            let dragStart = null;
+            let pagesRendered = 0;
+            
+            const RENDER_CONCURRENCY = 3;
+            
+            /* ===== FIX: nuevo estado ===== */
+            const pageEls = {};       // FIX: referencia DIRECTA a cada div (capturada ANTES de turn.js)
+            const pageImages = {};    // FIX: caché de imágenes ya renderizadas (dataURL)
+            const attached = {};      // FIX: páginas que ya tienen su imagen insertada
+            const pendingFlush = {};  // FIX: renderizadas pero aún no insertables
+            let flushTimer = null;
+            let renderQueue = [];     // cola de páginas por renderizar (permite priorizar)
+            
+            pdfjsLib.getDocument(pdfUrl).promise.then(function(pdf) {
+                pageCount = pdf.numPages;
+                $('#total-pages').text(pageCount);
+                
+                const flipbook = $('#flipbook');
+                flipbook.empty();
+                
+                // Crear páginas vacías y guardar la referencia directa a cada nodo
+                for (let p = 1; p <= pageCount; p++) {
+                    const div = document.createElement('div');
+                    div.className = 'turn-page page-loading';
+                    div.id = 'page-' + p;
+                    pageEls[p] = div;
+                    flipbook[0].appendChild(div);
+                }
+                
+                for (let p = 1; p <= pageCount; p++) renderQueue.push(p);
+                
+                initializeFlipbook();
+                renderInBackground(pdf);
+                
+            }).catch(function(error) {
+                console.error('Error cargando PDF:', error);
+                $('.loading').text('Error al cargar el PDF').css('background', 'rgba(255,0,0,0.7)');
+            });
+            
+            function renderInBackground(pdf) {
+                async function worker() {
+                    while (renderQueue.length > 0) {
+                        const n = renderQueue.shift();
+                        await renderSinglePage(pdf, n);
+                    }
+                }
+                
+                const workers = [];
+                for (let i = 0; i < RENDER_CONCURRENCY; i++) {
+                    workers.push(worker());
+                }
+                
+                Promise.all(workers).then(function() {
+                    flushPendingPages(); // FIX: última pasada de inserciones pendientes
+                    $('#render-text').text('✔ Todas las páginas cargadas');
+                    $('#render-fill').css('width', '100%');
+                    $('#render-status').delay(2500).fadeOut(600);
                 });
-        } catch(e) {
-            pdfjsLib.GlobalWorkerOptions.workerSrc = WORKER_CDN_URL;
-        }
-
-        // Usar la ruta relativa del archivo PDF en el mismo directorio
-        const PDF_RELATIVE_PATH = 'https://github.com/REPOUPTPC/brochure/releases/download/v2.0.0/archivo_comprimido.pdf';
-        const PDF_RESOLVED_URL = new URL(PDF_RELATIVE_PATH, window.location.href).href;
-        const CACHE_NAME = 'uptpc-brochure-v4';
-        const ESTIMATED_SIZE = 125287689; // ~125 MB fallback
-
-        let pdfDoc = null;
-        let pageCount = 0;
-        let currentPage = 1;
-        let flipbookInitialized = false;
-        let isFlipping = false;
-        let flipSafetyTimer = null;
-
-        // Registro del estado de renderizado: pageNum -> 'rendering' | 'done'
-        const renderingState = new Map();
-
-        // Elementos DOM de progreso
-        const $progressOverlay  = document.getElementById('progressOverlay');
-        const $progressFill     = document.getElementById('progressFill');
-        const $progressPercent  = document.getElementById('progressPercent');
-        const $progressBytes    = document.getElementById('progressBytes');
-        const $progressTitle    = document.getElementById('progressTitle');
-        const $progressSubtitle = document.getElementById('progressSubtitle');
-
-        // Detecta si es recarga manual (Ctrl+R / F5)
-        function isManualReload() {
-            try {
-                const entries = performance.getEntriesByType('navigation');
-                return entries.length > 0 && entries[0].type === 'reload';
-            } catch(e) {
+            }
+            
+            async function renderSinglePage(pdf, pageNum) {
+                try {
+                    const page = await pdf.getPage(pageNum);
+                    const viewport = page.getViewport({ scale: 1.5 });
+                    
+                    const canvas = document.createElement('canvas');
+                    canvas.width = viewport.width;
+                    canvas.height = viewport.height;
+                    
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    
+                    await page.render({
+                        canvasContext: ctx,
+                        viewport: viewport
+                    }).promise;
+                    
+                    /* FIX: JPEG en vez de PNG (5-10x menos memoria).
+                       Cambia a 'image/png' si necesitas calidad máxima. */
+                    pageImages[pageNum] = canvas.toDataURL('image/jpeg', 0.85);
+                    
+                    canvas.width = 0;
+                    canvas.height = 0;
+                    
+                    /* FIX: la imagen se guarda en CACHÉ y se INTENTA insertar.
+                       Si el elemento de la página no está accesible (turn.js
+                       lo movió/sacó del DOM), queda en cola de reintentos
+                       en vez de perderse en silencio. */
+                    tryAttachPage(pageNum);
+                    
+                    pagesRendered++;
+                    $('#render-fill').css('width', (pagesRendered / pageCount * 100) + '%');
+                    $('#render-text').text('Renderizando en segundo plano: ' + pagesRendered + ' / ' + pageCount);
+                    
+                } catch (err) {
+                    console.error('Error renderizando página ' + pageNum, err);
+                }
+            }
+            
+            /* ===== FIX central: inserción segura con reintentos ===== */
+            function tryAttachPage(pageNum) {
+                if (attached[pageNum] || !pageImages[pageNum]) return true;
+                
+                // 1º: la referencia directa al nodo original
+                let el = pageEls[pageNum];
+                
+                // 2º: si el nodo ya no está en el documento, buscarlo por id
+                //     (por si turn.js trabaja con otra copia del elemento)
+                if (!el || !document.contains(el)) {
+                    el = document.getElementById('page-' + pageNum);
+                }
+                
+                if (el && document.contains(el)) {
+                    const img = document.createElement('img');
+                    img.className = 'pdf-page';
+                    img.alt = 'Página ' + pageNum;
+                    img.src = pageImages[pageNum];
+                    el.appendChild(img);
+                    el.classList.remove('page-loading');
+                    attached[pageNum] = true;
+                    delete pendingFlush[pageNum];
+                    return true;
+                }
+                
+                // El elemento no está accesible AHORA → reintento posterior
+                pendingFlush[pageNum] = true;
+                ensureFlushTimer();
                 return false;
             }
-        }
-
-        // Al presionar Ctrl+R o F5, vaciar caché para obligar re-descarga
-        window.addEventListener('keydown', function(e) {
-            const isRefresh = (e.key === 'F5') ||
-                              ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r');
-            if (isRefresh) {
-                try { caches.delete(CACHE_NAME); } catch(err) {}
-            }
-        });
-
-        function updateProgress(percent, loadedBytes, totalBytes) {
-            $progressFill.style.width = percent + '%';
-            $progressPercent.textContent = percent + '%';
-            const loadedMB = (loadedBytes / (1024 * 1024)).toFixed(1);
-            const totalMB  = (totalBytes  / (1024 * 1024)).toFixed(1);
-            $progressBytes.textContent = loadedMB + ' MB / ' + totalMB + ' MB';
-        }
-
-        function animateProgressFast(callback) {
-            const start = performance.now();
-            const duration = 350;
-            function step(now) {
-                const t = Math.min((now - start) / duration, 1);
-                const p = Math.round(t * 100);
-                updateProgress(p, p * (ESTIMATED_SIZE / 100), ESTIMATED_SIZE);
-                if (t < 1) {
-                    requestAnimationFrame(step);
-                } else {
-                    callback();
+            
+            function flushPendingPages() {
+                let remaining = 0;
+                for (const n in pendingFlush) {
+                    if (!tryAttachPage(parseInt(n, 10))) remaining++;
+                }
+                if (remaining === 0 && flushTimer) {
+                    clearInterval(flushTimer);
+                    flushTimer = null;
                 }
             }
-            requestAnimationFrame(step);
-        }
-
-        // Descargar PDF con progreso y caché inteligente
-        async function downloadPdfWithProgress() {
-            const reloaded = isManualReload();
-            const cacheAvailable = ('caches' in window);
-            let cache = null;
-
-            if (cacheAvailable) {
-                try {
-                    cache = await caches.open(CACHE_NAME);
-                    if (reloaded) {
-                        await cache.delete(PDF_RESOLVED_URL);
-                        await cache.delete(PDF_RELATIVE_PATH);
-                    } else {
-                        let cached = await cache.match(PDF_RESOLVED_URL);
-                        if (!cached) {
-                            cached = await cache.match(PDF_RELATIVE_PATH);
-                        }
-                        if (cached) {
-                            $progressTitle.textContent = 'Cargando desde memoria…';
-                            $progressSubtitle.textContent = 'El folleto está guardado en la caché del navegador';
-
-                            return new Promise(function(resolve) {
-                                animateProgressFast(async function() {
-                                    const buf = await cached.arrayBuffer();
-                                    const badge = document.createElement('div');
-                                    badge.className = 'progress-cached-badge';
-                                    badge.innerHTML = '⚡ Cargado desde caché (Ctrl+R para re-descargar)';
-                                    $progressSubtitle.parentNode.appendChild(badge);
-                                    resolve(buf);
-                                });
-                            });
-                        }
-                    }
-                } catch(e) {
-                    cache = null;
+            
+            function ensureFlushTimer() {
+                if (!flushTimer) {
+                    flushTimer = setInterval(flushPendingPages, 400);
                 }
             }
-
-            if (window.location.protocol === 'file:') {
-                throw new Error('Estás abriendo el archivo en local mediante file://. Los navegadores bloquean "fetch" local por políticas de seguridad (CORS). Sube los cambios a GitHub Pages (https://...) o ejecuta un servidor local (ej: python3 -m http.server).');
-            }
-
-            const response = await fetch(PDF_RELATIVE_PATH);
-            if (!response.ok) {
-                throw new Error('No se pudo encontrar el archivo PDF local (' + response.status + ' ' + response.statusText + ')');
-            }
-
-            const contentLength = response.headers.get('content-length');
-            const totalBytes = contentLength ? parseInt(contentLength, 10) : ESTIMATED_SIZE;
-
-            const reader = response.body.getReader();
-            const chunks = [];
-            let loadedBytes = 0;
-
-            while (true) {
-                const result = await reader.read();
-                if (result.done) break;
-
-                chunks.push(result.value);
-                loadedBytes += result.value.length;
-
-                const percent = Math.min(100, Math.round((loadedBytes / totalBytes) * 100));
-                updateProgress(percent, loadedBytes, totalBytes);
-            }
-
-            const pdfData = new Uint8Array(loadedBytes);
-            let offset = 0;
-            for (let i = 0; i < chunks.length; i++) {
-                pdfData.set(chunks[i], offset);
-                offset += chunks[i].length;
-            }
-
-            if (cache) {
-                try {
-                    const cacheResp = new Response(pdfData.buffer.slice(0), {
-                        headers: {
-                            'Content-Type': 'application/pdf',
-                            'Content-Length': '' + loadedBytes
-                        }
-                    });
-                    await cache.put(PDF_RESOLVED_URL, cacheResp);
-                } catch(e) {
-                    console.warn('No se pudo guardar en caché:', e);
-                }
-            }
-
-            return pdfData.buffer;
-        }
-
-        function hideProgressOverlay() {
-            $progressOverlay.classList.add('hidden');
-        }
-
-        // Renderizado eficiente bajo demanda (On-demand)
-        async function renderPage(pageNum) {
-            if (pageNum < 1 || pageNum > pageCount) return;
-
-            const currentState = renderingState.get(pageNum);
-            if (currentState === 'rendering' || currentState === 'done') return;
-
-            renderingState.set(pageNum, 'rendering');
-
-            try {
-                const page = await pdfDoc.getPage(pageNum);
-                const viewport = page.getViewport({ scale: 1.5 });
-
-                const canvas = document.createElement('canvas');
-                const ctx = canvas.getContext('2d', { alpha: false });
-                canvas.width = viewport.width;
-                canvas.height = viewport.height;
-
-                await page.render({
-                    canvasContext: ctx,
-                    viewport: viewport
-                }).promise;
-
-                // Convertir canvas a imagen JPEG 85% para aligerar consumo GPU/RAM en turn.js
-                const imgUrl = canvas.toDataURL('image/jpeg', 0.85);
-                const img = document.createElement('img');
-                img.src = imgUrl;
-                img.className = 'pdf-page';
-                img.alt = 'Página ' + pageNum;
-
-                const pageDiv = document.getElementById('page-' + pageNum);
-                if (pageDiv) {
-                    pageDiv.innerHTML = '';
-                    pageDiv.appendChild(img);
-                }
-
-                renderingState.set(pageNum, 'done');
-            } catch(e) {
-                console.warn('Error al renderizar página ' + pageNum + ':', e);
-                renderingState.delete(pageNum); // Permitir reintento si ocurre error
-            }
-        }
-
-        // Carga preventiva de páginas cercanas a la actual
-        function preloadAround(page) {
-            const range = [page - 2, page - 1, page, page + 1, page + 2, page + 3];
-            for (let i = 0; i < range.length; i++) {
-                const p = range[i];
-                if (p >= 1 && p <= pageCount) {
-                    renderPage(p);
-                }
-            }
-        }
-
-        // Inicializar turn.js con seguro anti-bloqueo
-        function initializeFlipbook() {
-            const $flipbook = $('#flipbook');
-
-            $flipbook.children().not('.hover-indicator').remove();
-
-            for (let i = 1; i <= pageCount; i++) {
-                const pageDiv = $('<div>', {
-                    'class': 'turn-page',
-                    'id': 'page-' + i
-                });
-                pageDiv.html(
-                    '<div class="page-loading-placeholder">' +
-                    '<div class="spinner"></div><span>Cargando pág. ' + i + '</span>' +
-                    '</div>'
-                );
-                $flipbook.append(pageDiv);
-            }
-
-            $flipbook.turn({
-                width: 800,
-                height: 500,
-                autoCenter: true,
-                acceleration: true,
-                gradients: true,
-                elevation: 50,
-                duration: 500,
-                display: 'double',
-                when: {
-                    turning: function(event, page, view) {
-                        isFlipping = true;
-                        currentPage = page;
-                        updateControls();
-
-                        // Temporizador de seguridad: si turn.js pierde un evento, se desbloquea en 700ms
-                        if (flipSafetyTimer) clearTimeout(flipSafetyTimer);
-                        flipSafetyTimer = setTimeout(function() {
-                            isFlipping = false;
+            
+            function initializeFlipbook() {
+                $('#flipbook').turn({
+                    width: 800,
+                    height: 500,
+                    autoCenter: true,
+                    acceleration: true,
+                    gradients: true,
+                    elevation: 50,
+                    duration: 600,
+                    display: 'double',
+                    when: {
+                        turning: function(event, page) {
+                            isTurning = true;
+                            currentPage = page;
+                            
+                            // FIX: priorizar el render de la vista entrante
+                            // y aprovechar para insertar pendientes
+                            prioritize([page - 1, page, page + 1]);
+                            flushPendingPages();
+                        },
+                        turned: function(event, page) {
+                            isTurning = false;
+                            currentPage = page;
                             updateControls();
-                        }, 700);
-
-                        preloadAround(page);
-                    },
-                    turned: function(event, page, view) {
-                        if (flipSafetyTimer) clearTimeout(flipSafetyTimer);
-                        isFlipping = false;
-                        currentPage = page;
-                        updatePageDisplay();
-                        updateControls();
-                        preloadAround(page);
+                            
+                            // FIX: turn.js acaba de colocar los elementos en el
+                            // DOM → inyectar las imágenes que estaban pendientes
+                            flushPendingPages();
+                        }
                     }
-                }
-            });
-
-            flipbookInitialized = true;
-            updateControls();
-            $flipbook.turn('page', 1);
-            setupHoverEffects();
-        }
-
-        function updatePageDisplay() {
-            document.getElementById('current-page-display').textContent = currentPage;
-        }
-
-        function updateControls() {
-            if (!flipbookInitialized) return;
-            const page = $('#flipbook').turn('page');
-            $('#prev-page').prop('disabled', page <= 1 || isFlipping);
-            $('#next-page').prop('disabled', page >= pageCount || isFlipping);
-        }
-
-        function safeFlipNext() {
-            if (!flipbookInitialized || isFlipping) return;
-            if (currentPage >= pageCount) return;
-            $('#flipbook').turn('next');
-        }
-
-        function safeFlipPrev() {
-            if (!flipbookInitialized || isFlipping) return;
-            if (currentPage <= 1) return;
-            $('#flipbook').turn('previous');
-        }
-
-        function setupHoverEffects() {
-            const $flipbook = $('#flipbook');
-
-            $flipbook.on('mousemove', function(e) {
-                if (!flipbookInitialized || isFlipping) return;
-
-                const rect = this.getBoundingClientRect();
-                const mouseX = e.clientX - rect.left;
-                const threshold = 100;
-
-                if (mouseX < threshold && currentPage > 1) {
-                    $flipbook.addClass('hover-left').removeClass('hover-right');
-                } else if (mouseX > rect.width - threshold && currentPage < pageCount) {
-                    $flipbook.addClass('hover-right').removeClass('hover-left');
-                } else {
-                    $flipbook.removeClass('hover-left hover-right');
-                }
-            });
-
-            $flipbook.on('click', function(e) {
-                if (!flipbookInitialized || isFlipping) return;
-
-                const rect = this.getBoundingClientRect();
-                const mouseX = e.clientX - rect.left;
-                const threshold = 120;
-
-                if (mouseX < threshold) {
-                    safeFlipPrev();
-                } else if (mouseX > rect.width - threshold) {
-                    safeFlipNext();
-                }
-            });
-
-            $flipbook.on('mouseleave', function() {
-                $flipbook.removeClass('hover-left hover-right');
-            });
-        }
-
-        $('#prev-page').on('click', safeFlipPrev);
-        $('#next-page').on('click', safeFlipNext);
-
-        $(document).on('keydown', function(e) {
-            if (!flipbookInitialized) return;
-
-            if (e.keyCode === 37) { // Flecha izquierda
-                e.preventDefault();
-                safeFlipPrev();
-            } else if (e.keyCode === 39) { // Flecha derecha
-                e.preventDefault();
-                safeFlipNext();
+                });
+                
+                flipbookInitialized = true;
+                $('.loading').remove();
+                updateControls();
+                setupHoverEffects();
             }
-        });
-
-        async function main() {
-            try {
-                const pdfBuffer = await downloadPdfWithProgress();
-
-                $progressTitle.textContent = 'Procesando documento…';
-                $progressSubtitle.textContent = 'Preparando las páginas del folleto…';
-
-                pdfDoc = await pdfjsLib.getDocument({ data: pdfBuffer }).promise;
-                pageCount = pdfDoc.numPages;
-                document.getElementById('total-pages').textContent = pageCount;
-
-                initializeFlipbook();
-
-                // Renderizar páginas iniciales inmediatamente
-                await renderPage(1);
-                if (pageCount >= 2) await renderPage(2);
-                if (pageCount >= 3) renderPage(3);
-                if (pageCount >= 4) renderPage(4);
-
-                hideProgressOverlay();
-
-            } catch(error) {
-                console.error('Error al cargar el PDF:', error);
-                $progressTitle.textContent = 'Error al cargar';
-                $progressSubtitle.textContent = '';
-                $progressFill.style.background = '#f87171';
-
-                const errDiv = document.createElement('div');
-                errDiv.className = 'progress-error';
-                errDiv.textContent = error.message || 'No se pudo cargar el archivo PDF local.';
-                $progressSubtitle.parentNode.appendChild(errDiv);
+            
+            function prioritize(nums) {
+                nums.forEach(function(n) {
+                    const idx = renderQueue.indexOf(n);
+                    if (idx !== -1) {
+                        renderQueue.splice(idx, 1);
+                        renderQueue.unshift(n);
+                    }
+                });
             }
-        }
-
-        $(document).ready(function() {
-            main();
+            
+            function updateControls() {
+                if (!flipbookInitialized) return;
+                const page = $('#flipbook').turn('page');
+                $('#prev-page').prop('disabled', page <= 1);
+                $('#next-page').prop('disabled', page >= pageCount);
+                $('#page-info').html('Página ' + page + ' de ' + pageCount);
+            }
+            
+            function safeTurn(action) {
+                if (!flipbookInitialized || isTurning) return;
+                $('#flipbook').turn(action);
+            }
+            
+            function setupHoverEffects() {
+                const flipbook = $('#flipbook');
+                const wrapper = $('.flipbook-wrapper');
+                
+                document.addEventListener('mousedown', function(e) {
+                    const el = document.getElementById('flipbook');
+                    if (!el) return;
+                    const r = el.getBoundingClientRect();
+                    const x = e.clientX - r.left;
+                    const y = e.clientY - r.top;
+                    
+                    if (x < 0 || x > r.width || y < 0 || y > r.height) {
+                        dragStart = null;
+                        return;
+                    }
+                    
+                    dragStart = { x: e.clientX, y: e.clientY, moved: false };
+                    
+                    const threshold = 150;
+                    if (x < threshold || x > r.width - threshold) {
+                        e.stopPropagation();
+                    }
+                }, true);
+                
+                document.addEventListener('touchstart', function(e) {
+                    if (!e.touches || !e.touches.length) return;
+                    const t = e.touches[0];
+                    const r = document.getElementById('flipbook').getBoundingClientRect();
+                    const x = t.clientX - r.left;
+                    const y = t.clientY - r.top;
+                    if (x >= 0 && x <= r.width && y >= 0 && y <= r.height) {
+                        const threshold = 150;
+                        if (x < threshold || x > r.width - threshold) {
+                            e.stopPropagation();
+                        }
+                    }
+                }, true);
+                
+                document.addEventListener('mousemove', function(e) {
+                    if (dragStart && !dragStart.moved &&
+                        (Math.abs(e.clientX - dragStart.x) > 8 ||
+                         Math.abs(e.clientY - dragStart.y) > 8)) {
+                        dragStart.moved = true;
+                    }
+                });
+                
+                flipbook.on('mousemove', function(e) {
+                    if (!flipbookInitialized) return;
+                    const rect = this.getBoundingClientRect();
+                    const mouseX = e.clientX - rect.left;
+                    const threshold = 100;
+                    
+                    if (mouseX < threshold && currentPage > 1) {
+                        wrapper.addClass('hover-left').removeClass('hover-right');
+                    } else if (mouseX > rect.width - threshold && currentPage < pageCount) {
+                        wrapper.addClass('hover-right').removeClass('hover-left');
+                    } else {
+                        wrapper.removeClass('hover-left hover-right');
+                    }
+                });
+                
+                flipbook.on('mouseleave', function() {
+                    wrapper.removeClass('hover-left hover-right');
+                });
+                
+                flipbook.on('click', function(e) {
+                    if (!flipbookInitialized || isTurning) return;
+                    if (dragStart && dragStart.moved) return;
+                    
+                    const rect = this.getBoundingClientRect();
+                    const mouseX = e.clientX - rect.left;
+                    const threshold = 150;
+                    
+                    if (mouseX < threshold && currentPage > 1) {
+                        safeTurn('previous');
+                    } else if (mouseX > rect.width - threshold && currentPage < pageCount) {
+                        safeTurn('next');
+                    }
+                });
+            }
+            
+            $('#prev-page').on('click', function() { safeTurn('previous'); });
+            $('#next-page').on('click', function() { safeTurn('next'); });
+            
+            $(document).on('keydown', function(e) {
+                if (!flipbookInitialized) return;
+                if (e.keyCode === 37) { e.preventDefault(); safeTurn('previous'); }
+                else if (e.keyCode === 39) { e.preventDefault(); safeTurn('next'); }
+            });
         });
-
-    })();
     </script>
 </body>
 </html>
