@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visor PDF con efecto hover</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: Arial, sans-serif;
+            background: #2c3e50;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: #34495e;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+        
+        #flipbook {
+            width: 800px;
+            height: 500px;
+            margin: 0 auto;
+            background: #ecf0f1;
+            border-radius: 5px;
+            overflow: hidden;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            position: relative;
+            cursor: pointer;
+        }
+        
+        .turn-page {
+            background-color: white;
+            border: 1px solid #bdc3c7;
+            overflow: hidden;
+            transition: transform 0.2s ease;
+        }
+        
+        /* Efecto hover en las esquinas */
+        .turn-page.hover-left {
+            transform: perspective(1000px) rotateY(-5deg);
+            box-shadow: -5px 0 15px rgba(0,0,0,0.3);
+        }
+        
+        .turn-page.hover-right {
+            transform: perspective(1000px) rotateY(5deg);
+            box-shadow: 5px 0 15px rgba(0,0,0,0.3);
+        }
+        
+        /* Indicadores visuales de hover */
+        .hover-indicator {
+            position: absolute;
+            top: 0;
+            width: 50px;
+            height: 100%;
+            background: linear-gradient(to right, rgba(52, 152, 219, 0.2), transparent);
+            pointer-events: none;
+            z-index: 1000;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+        
+        .hover-indicator.left {
+            left: 0;
+            background: linear-gradient(to right, rgba(52, 152, 219, 0.3), transparent);
+        }
+        
+        .hover-indicator.right {
+            right: 0;
+            background: linear-gradient(to left, rgba(52, 152, 219, 0.3), transparent);
+        }
+        
+        #flipbook.hover-left .hover-indicator.left,
+        #flipbook.hover-right .hover-indicator.right {
+            opacity: 1;
+        }
+        
+        .page-content {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: white;
+            font-size: 24px;
+            color: #2c3e50;
+        }
+        
+        .pdf-page {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        button {
+            padding: 12px 25px;
+            font-size: 16px;
+            cursor: pointer;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            transition: background 0.3s, transform 0.2s;
+            font-weight: bold;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        
+        button:hover {
+            background: #2980b9;
+            transform: translateY(-2px);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        button:disabled {
+            background: #95a5a6;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .page-info {
+            color: white;
+            text-align: center;
+            margin-top: 15px;
+            font-size: 16px;
+        }
+        
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 15px 30px;
+            border-radius: 5px;
+            z-index: 1000;
+        }
+    </style>
+    
+    <!-- Librerías necesarias -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/turn.js/3/turn.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div id="flipbook">
+            <div class="hover-indicator left"></div>
+            <div class="hover-indicator right"></div>
+            <div class="loading">Cargando PDF...</div>
+        </div>
+        
+        <div class="controls">
+            <button id="prev-page" disabled>← Anterior</button>
+            <button id="next-page" disabled>Siguiente →</button>
+        </div>
+        
+        <div class="page-info" id="page-info">
+            Página 1 de <span id="total-pages">0</span>
+        </div>
+    </div>
+
+    <script>
+        $(document).ready(function() {
+            // Configurar PDF.js
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+            
+            // URL del PDF - Puedes cambiar esta URL por la de tu PDF
+            const pdfUrl = 'https://github.com/REPOUPTPC/brochure/releases/download/v2.0.0/archivo_comprimido.pdf';
+            
+            let pdfDoc = null;
+            let pageCount = 0;
+            let currentPage = 1;
+            let flipbookInitialized = false;
+            let hoverTimeout = null;
+            let hoverDirection = null;
+            
+            // Cargar el PDF
+            pdfjsLib.getDocument(pdfUrl).promise.then(function(pdf) {
+                pdfDoc = pdf;
+                pageCount = pdf.numPages;
+                $('#total-pages').text(pageCount);
+                
+                // Crear las páginas para turn.js
+                createFlipbookPages(pdfDoc);
+            }).catch(function(error) {
+                console.error('Error cargando PDF:', error);
+                $('.loading').text('Error al cargar el PDF').css('background', 'rgba(255,0,0,0.7)');
+            });
+            
+            function createFlipbookPages(pdf) {
+                const flipbook = $('#flipbook');
+                flipbook.empty(); // Limpiar loading
+                
+                // Añadir los indicadores de nuevo
+                flipbook.append('<div class="hover-indicator left"></div><div class="hover-indicator right"></div>');
+                
+                // Crear promesas para cargar todas las páginas
+                const pagePromises = [];
+                
+                for (let pageNum = 1; pageNum <= pageCount; pageNum++) {
+                    pagePromises.push(
+                        pdf.getPage(pageNum).then(function(page) {
+                            const viewport = page.getViewport({ scale: 1.5 });
+                            
+                            // Crear canvas para renderizar la página
+                            const canvas = document.createElement('canvas');
+                            const context = canvas.getContext('2d');
+                            canvas.width = viewport.width;
+                            canvas.height = viewport.height;
+                            
+                            // Renderizar la página
+                            return page.render({
+                                canvasContext: context,
+                                viewport: viewport
+                            }).promise.then(function() {
+                                // Crear elemento de página para turn.js
+                                const pageDiv = $('<div>', {
+                                    class: 'turn-page',
+                                    id: 'page-' + pageNum
+                                });
+                                
+                                // Añadir la imagen renderizada
+                                const img = $('<img>', {
+                                    class: 'pdf-page',
+                                    src: canvas.toDataURL(),
+                                    alt: 'Página ' + pageNum
+                                });
+                                
+                                pageDiv.append(img);
+                                return pageDiv;
+                            });
+                        })
+                    );
+                }
+                
+                // Esperar a que todas las páginas estén renderizadas
+                Promise.all(pagePromises).then(function(pages) {
+                    // Añadir todas las páginas al flipbook
+                    pages.forEach(function(page) {
+                        $('#flipbook').append(page);
+                    });
+                    
+                    // Inicializar turn.js
+                    initializeFlipbook();
+                });
+            }
+            
+            function initializeFlipbook() {
+                $('#flipbook').turn({
+                    width: 800,
+                    height: 500,
+                    autoCenter: true,
+                    acceleration: true,
+                    gradients: true,
+                    elevation: 50,
+                    duration: 600,
+                    display: 'double', // Vista de dos páginas
+                    when: {
+                        turning: function(event, page, view) {
+                            currentPage = page;
+                            updateControls();
+                        },
+                        turned: function(event, page, view) {
+                            currentPage = page;
+                            $('#page-info').html('Página ' + page + ' de ' + pageCount);
+                        }
+                    }
+                });
+                
+                flipbookInitialized = true;
+                $('.loading').remove();
+                updateControls();
+                
+                // Ir a la primera página
+                $('#flipbook').turn('page', 1);
+                
+                // Configurar efectos hover
+                setupHoverEffects();
+            }
+            
+            function setupHoverEffects() {
+                const flipbook = $('#flipbook');
+                
+                // Detectar movimiento del mouse
+                flipbook.mousemove(function(e) {
+                    if (!flipbookInitialized) return;
+                    
+                    const rect = this.getBoundingClientRect();
+                    const mouseX = e.clientX - rect.left;
+                    const threshold = 100; // Zona de activación en píxeles
+                    
+                    // Limpiar timeout anterior
+                    if (hoverTimeout) {
+                        clearTimeout(hoverTimeout);
+                    }
+                    
+                    // Determinar dirección del hover
+                    if (mouseX < threshold) {
+                        // Hover en borde izquierdo - página anterior
+                        if (currentPage > 1) {
+                            flipbook.addClass('hover-left').removeClass('hover-right');
+                            hoverDirection = 'prev';
+                            
+                            // Activar efecto visual en las páginas
+                            $('.turn-page').removeClass('hover-right');
+                            $('.turn-page').addClass('hover-left');
+                        }
+                    } else if (mouseX > rect.width - threshold) {
+                        // Hover en borde derecho - página siguiente
+                        if (currentPage < pageCount) {
+                            flipbook.addClass('hover-right').removeClass('hover-left');
+                            hoverDirection = 'next';
+                            
+                            // Activar efecto visual en las páginas
+                            $('.turn-page').removeClass('hover-left');
+                            $('.turn-page').addClass('hover-right');
+                        }
+                    } else {
+                        // No hay hover activo
+                        flipbook.removeClass('hover-left hover-right');
+                        $('.turn-page').removeClass('hover-left hover-right');
+                        hoverDirection = null;
+                    }
+                });
+                
+                // Click para cambiar página
+                flipbook.click(function(e) {
+                    if (!flipbookInitialized) return;
+                    
+                    const rect = this.getBoundingClientRect();
+                    const mouseX = e.clientX - rect.left;
+                    const threshold = 150;
+                    
+                    if (mouseX < threshold && currentPage > 1) {
+                        // Click en zona izquierda - página anterior
+                        $('#flipbook').turn('previous');
+                    } else if (mouseX > rect.width - threshold && currentPage < pageCount) {
+                        // Click en zona derecha - página siguiente
+                        $('#flipbook').turn('next');
+                    }
+                });
+                
+                // Mouse leave - quitar efectos
+                flipbook.mouseleave(function() {
+                    flipbook.removeClass('hover-left hover-right');
+                    $('.turn-page').removeClass('hover-left hover-right');
+                    hoverDirection = null;
+                    
+                    if (hoverTimeout) {
+                        clearTimeout(hoverTimeout);
+                    }
+                });
+            }
+            
+            // Función para actualizar el estado de los botones
+            function updateControls() {
+                if (!flipbookInitialized) return;
+                
+                const currentPage = $('#flipbook').turn('page');
+                
+                $('#prev-page').prop('disabled', currentPage <= 1);
+                $('#next-page').prop('disabled', currentPage >= pageCount);
+            }
+            
+            // Eventos de los botones
+            $('#prev-page').click(function() {
+                if (flipbookInitialized) {
+                    $('#flipbook').turn('previous');
+                }
+            });
+            
+            $('#next-page').click(function() {
+                if (flipbookInitialized) {
+                    $('#flipbook').turn('next');
+                }
+            });
+            
+            // Soporte para teclas de navegación
+            $(document).keydown(function(e) {
+                if (!flipbookInitialized) return;
+                
+                if (e.keyCode === 37) { // Flecha izquierda
+                    e.preventDefault();
+                    $('#flipbook').turn('previous');
+                } else if (e.keyCode === 39) { // Flecha derecha
+                    e.preventDefault();
+                    $('#flipbook').turn('next');
+                }
+            });
+        });
+    </script>
+</body>
+</html>
