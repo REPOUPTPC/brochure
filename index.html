@@ -224,18 +224,51 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            transition: transform 0.4s cubic-bezier(0.2, 0, 0, 1);
+            will-change: transform;
+        }
+
+        #book {
+            position: relative;
+            display: block;
+            box-sizing: border-box;
+            margin: 0 auto;
+        }
+
+        .stf__parent {
+            position: relative !important;
+            display: block !important;
+            box-sizing: border-box !important;
+            margin: 0 auto;
             box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.85);
             border-radius: 6px;
+        }
+
+        .stf__wrapper {
+            position: relative !important;
+            width: 100% !important;
+            height: 100% !important;
+            box-sizing: border-box !important;
+            padding-bottom: 0 !important;
+        }
+
+        .stf__block {
+            position: absolute !important;
+            width: 100% !important;
+            height: 100% !important;
+            top: 0 !important;
+            left: 0 !important;
+            box-sizing: border-box !important;
         }
 
         #flipbook-wrapper::after {
             content: '';
             position: absolute;
-            bottom: -20px;
-            left: 5%;
-            width: 90%;
+            bottom: -22px;
+            left: 4%;
+            width: 92%;
             height: 25px;
-            background: radial-gradient(ellipse at center, rgba(0,0,0,0.6) 0%, transparent 75%);
+            background: radial-gradient(ellipse at center, rgba(0,0,0,0.65) 0%, transparent 75%);
             pointer-events: none;
             z-index: -1;
         }
@@ -970,9 +1003,9 @@
                     </button>
                 </div>
 
-                <!-- Modo de vista: Doble / Simple -->
-                <button class="btn-tool" id="btn-spread-mode" title="Cambiar a vista de una página / dos páginas">
-                    <svg viewBox="0 0 24 24"><path d="M19 2H5C3.9 2 3 2.9 3 4V20C3 21.1 3.9 22 5 22H19C20.1 22 21 21.1 21 20V4C21 2.9 20.1 2 19 2M19 20H13V4H19V20M11 20H5V4H11V20Z"/></svg>
+                <!-- Modo de vista: Doble (Libro) / Simple (1 Pág) -->
+                <button class="btn-tool active" id="btn-spread-mode" title="Cambiar a Página Simple (1 Página)">
+                    <svg viewBox="0 0 24 24" id="icon-spread-mode"><path d="M19 2H5C3.9 2 3 2.9 3 4V20C3 21.1 3.9 22 5 22H19C20.1 22 21 21.1 21 20V4C21 2.9 20.1 2 19 2M19 20H13V4H19V20M11 20H5V4H11V20Z"/></svg>
                     <span class="btn-text" id="spread-mode-text">Vista Doble</span>
                 </button>
 
@@ -1086,11 +1119,16 @@
                     : 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
             }
 
-            // Detección de URL del PDF
+            // Detección de URL del PDF (Cloudflare R2 como origen oficial)
             const urlParams = new URLSearchParams(window.location.search);
-            const defaultRemotePdf = 'https://pub-1a8a6736c07b4083b58438c05d3c94b6.r2.dev/archivo_comprimido.pdf';
-            const defaultLocalPdf = './archivo_comprimido.pdf';
-            const primaryPdfUrl = urlParams.get('pdf') || defaultRemotePdf;
+            const customPdf = urlParams.get('pdf');
+            const cacheBuster = urlParams.get('v') || urlParams.get('t');
+            const R2_PDF_URL = 'https://pub-1a8a6736c07b4083b58438c05d3c94b6.r2.dev/archivo_comprimido.pdf';
+
+            let targetPdfUrl = customPdf || R2_PDF_URL;
+            if (cacheBuster && !customPdf) {
+                targetPdfUrl += (targetPdfUrl.includes('?') ? '&' : '?') + `v=${encodeURIComponent(cacheBuster)}`;
+            }
 
             // Audio Web procedural para el paso de página
             let soundEnabled = true;
@@ -1246,12 +1284,13 @@
                     this.pageFlip = null;
                     this.renderManager = null;
                     this.structure = null;
+                    this.aspectRatio = 612 / 790.5;
                     this.currentZoom = 1.0;
                     this.panOffset = { x: 0, y: 0 };
                     this.isPanning = false;
                     this.panStart = { x: 0, y: 0 };
                     this.currentOrientation = 'landscape';
-                    this.forcedSinglePage = false;
+                    this.isSinglePage = false; // Modo doble página (estilo libro) por defecto
                     this.currentBookIndex = 0;
 
                     this.dom = {
@@ -1295,33 +1334,38 @@
 
                 async init() {
                     this.bindGlobalEvents();
-                    await this.loadPdfWithFallback(primaryPdfUrl);
+                    await this.loadPdfFromR2(targetPdfUrl);
                 }
 
-                async loadPdfWithFallback(url) {
-                    this.showLoading(15, 'Conectando con el brochure...');
+                async loadPdfFromR2(url) {
+                    this.showLoading(10, 'Conectando con Cloudflare R2...');
                     this.dom.btnDownload.href = url;
 
                     try {
-                        const pdf = await pdfjsLib.getDocument({
+                        const loadingTask = pdfjsLib.getDocument({
                             url: url,
                             cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/cmaps/',
                             cMapPacked: true
-                        }).promise;
-                        await this.onPdfLoaded(pdf);
-                    } catch (errPrimary) {
-                        console.warn('Fallo al cargar URL primaria, intentando respaldo...', errPrimary);
-                        if (url !== defaultLocalPdf) {
-                            try {
-                                this.showLoading(30, 'Cargando archivo de respaldo...');
-                                const fallbackPdf = await pdfjsLib.getDocument(defaultLocalPdf).promise;
-                                await this.onPdfLoaded(fallbackPdf);
-                                return;
-                            } catch (errFallback) {
-                                console.error('Fallo también el respaldo', errFallback);
+                        });
+
+                        // Seguimiento de descarga progresiva en tiempo real desde Cloudflare R2
+                        loadingTask.onProgress = (progressData) => {
+                            if (progressData.total > 0) {
+                                const pct = Math.min(99, Math.round((progressData.loaded / progressData.total) * 100));
+                                const mbLoaded = (progressData.loaded / (1024 * 1024)).toFixed(1);
+                                const mbTotal = (progressData.total / (1024 * 1024)).toFixed(1);
+                                this.showLoading(pct, `Descargando desde Cloudflare R2: ${pct}% (${mbLoaded} MB / ${mbTotal} MB)...`);
+                            } else if (progressData.loaded > 0) {
+                                const mbLoaded = (progressData.loaded / (1024 * 1024)).toFixed(1);
+                                this.showLoading(40, `Descargando desde Cloudflare R2: ${mbLoaded} MB transferidos...`);
                             }
-                        }
-                        this.showError('No se pudo cargar el archivo PDF. Si la conexión es lenta o hay restricciones de red, intenta recargar la página.');
+                        };
+
+                        const pdf = await loadingTask.promise;
+                        await this.onPdfLoaded(pdf);
+                    } catch (err) {
+                        console.error('Error cargando PDF desde Cloudflare R2:', err);
+                        this.showError('No se pudo descargar el archivo PDF desde Cloudflare R2. Verifica tu conexión a internet o intenta recargar.');
                     }
                 }
 
@@ -1345,6 +1389,7 @@
                     this.buildDomPages(aspectRatio);
 
                     this.showLoading(85, 'Inicializando animaciones...');
+                    this.updateBookDimensions();
                     this.initPageFlip(pdfWidth, pdfHeight, aspectRatio);
 
                     // Inicializar miniaturas
@@ -1459,26 +1504,80 @@
                     });
                 }
 
+                updateBookDimensions() {
+                    const vp = this.dom.viewport;
+                    if (!vp) return;
+                    const availW = Math.max(280, vp.clientWidth - 24);
+                    const availH = Math.max(280, vp.clientHeight - 20);
+                    const pageAspect = this.aspectRatio || (612 / 790.5);
+
+                    let targetBookWidth, targetBookHeight, targetPageWidth, targetPageHeight;
+
+                    if (!this.isSinglePage) {
+                        // MODO VISTA DOBLE (2 páginas lado a lado estilo libro)
+                        const spreadAspect = pageAspect * 2;
+                        if (availW / availH >= spreadAspect) {
+                            // Altura disponible es el factor limitante: aprovechamos toda la altura
+                            targetBookHeight = availH;
+                            targetBookWidth = Math.round(targetBookHeight * spreadAspect);
+                        } else {
+                            // Ancho disponible es el factor limitante
+                            targetBookWidth = availW;
+                            targetBookHeight = Math.round(targetBookWidth / spreadAspect);
+                        }
+                        targetPageWidth = Math.round(targetBookWidth / 2);
+                        targetPageHeight = targetBookHeight;
+                    } else {
+                        // MODO PÁGINA SIMPLE (1 página grande centrada)
+                        if (availW / availH >= pageAspect) {
+                            targetBookHeight = availH;
+                            targetBookWidth = Math.round(targetBookHeight * pageAspect);
+                        } else {
+                            targetBookWidth = availW;
+                            targetBookHeight = Math.round(targetBookWidth / pageAspect);
+                        }
+                        targetPageWidth = targetBookWidth;
+                        targetPageHeight = targetBookHeight;
+                    }
+
+                    // Establecer dimensiones en píxeles reales en #book y #flipbook-wrapper
+                    this.dom.book.style.width = `${targetBookWidth}px`;
+                    this.dom.book.style.height = `${targetBookHeight}px`;
+                    this.dom.wrapper.style.width = `${targetBookWidth}px`;
+                    this.dom.wrapper.style.height = `${targetBookHeight}px`;
+
+                    if (this.pageFlip) {
+                        const settings = this.pageFlip.getSettings();
+                        settings.usePortrait = this.isSinglePage;
+                        settings.minWidth = this.isSinglePage ? 99999 : 0;
+                        settings.width = targetPageWidth;
+                        settings.height = targetPageHeight;
+                        settings.maxWidth = targetPageWidth * 3;
+                        settings.minHeight = 0;
+                        settings.maxHeight = targetPageHeight * 3;
+                        this.pageFlip.update();
+                    }
+                }
+
                 initPageFlip(pdfWidth, pdfHeight, aspectRatio) {
-                    const baseHeight = 780;
-                    const baseWidth = Math.round(baseHeight * aspectRatio);
-                    const minWidthThreshold = this.forcedSinglePage ? 9999 : 360;
+                    const targetPageWidth = Math.round(parseInt(this.dom.book.style.width, 10) / (this.isSinglePage ? 1 : 2));
+                    const targetPageHeight = parseInt(this.dom.book.style.height, 10);
 
                     this.pageFlip = new St.PageFlip(this.dom.book, {
-                        width: baseWidth,
-                        height: baseHeight,
+                        width: targetPageWidth,
+                        height: targetPageHeight,
                         size: 'stretch',
-                        minWidth: minWidthThreshold,
-                        maxWidth: 2400,
-                        minHeight: 400,
-                        maxHeight: 2200,
+                        minWidth: this.isSinglePage ? 99999 : 0,
+                        maxWidth: 3000,
+                        minHeight: 0,
+                        maxHeight: 3000,
                         maxShadowOpacity: 0.55,
                         showCover: true,
-                        usePortrait: true,
-                        flippingTime: 700,
+                        usePortrait: this.isSinglePage,
+                        flippingTime: 650,
                         showPageCorners: true,
                         drawShadow: true,
-                        autoSize: true,
+                        autoSize: false,
                         useMouseEvents: true,
                         clickEventForward: true,
                         swipeDistance: 25
@@ -1488,6 +1587,7 @@
 
                     this.pageFlip.on('init', (e) => {
                         this.currentOrientation = e.data.mode;
+                        this.updateSpreadModeUI();
                         this.updateControlsState();
                         this.loadVisiblePages();
                     });
@@ -1510,8 +1610,9 @@
                     const ro = new ResizeObserver(() => {
                         clearTimeout(resizeTimer);
                         resizeTimer = setTimeout(() => {
-                            if (this.pageFlip) this.pageFlip.update();
-                        }, 120);
+                            this.updateBookDimensions();
+                            this.updateControlsState();
+                        }, 80);
                     });
                     ro.observe(this.dom.viewport);
                 }
@@ -1519,9 +1620,21 @@
                 loadVisiblePages() {
                     const bookIdx = this.currentBookIndex;
                     const mode = this.currentOrientation;
-                    const visibleIndices = (mode === 'landscape')
+                    const isDouble = (mode === 'landscape' && !this.isSinglePage);
+                    const visibleIndices = isDouble
                         ? (bookIdx === 0 ? [0] : (bookIdx === this.structure.totalBookPages - 1 ? [bookIdx] : [bookIdx, bookIdx + 1]))
                         : [bookIdx];
+
+                    // Si estamos en modo página simple, garantizamos que ninguna otra página permanezca visible
+                    if (this.isSinglePage && this.dom.book) {
+                        const pages = this.dom.book.querySelectorAll('.page');
+                        pages.forEach((pageEl) => {
+                            const pIdx = parseInt(pageEl.dataset.bookIndex, 10);
+                            if (pIdx !== bookIdx) {
+                                pageEl.style.display = 'none';
+                            }
+                        });
+                    }
 
                     // Renderizar páginas visibles con alta prioridad
                     visibleIndices.forEach((bIdx) => {
@@ -1564,7 +1677,7 @@
                 updateControlsState() {
                     const bookIdx = this.currentBookIndex;
                     const totalBook = this.structure.totalBookPages;
-                    const isLandscape = (this.currentOrientation === 'landscape');
+                    const isLandscape = (this.currentOrientation === 'landscape' && !this.isSinglePage);
 
                     // Deshabilitar botones de navegación en extremos
                     const isAtStart = (bookIdx <= 0);
@@ -1575,16 +1688,31 @@
                     this.dom.btnNext.disabled = isAtEnd;
                     this.dom.sideNext.disabled = isAtEnd;
 
+                    // Auto-centrado visual suave de portada y contraportada en modo libro (doble página)
+                    if (isLandscape && !this.isSinglePage) {
+                        if (isAtStart) {
+                            this.dom.wrapper.style.transform = 'translateX(-25%)';
+                        } else if (isAtEnd) {
+                            this.dom.wrapper.style.transform = 'translateX(25%)';
+                        } else {
+                            this.dom.wrapper.style.transform = 'translateX(0)';
+                        }
+                    } else {
+                        this.dom.wrapper.style.transform = 'translateX(0)';
+                    }
+
                     // Texto amigable de pliegos
                     const currentItem = this.structure.pages[bookIdx];
                     let label = '';
                     let activePdfPage = currentItem ? currentItem.pdfPage : 1;
 
-                    if (!isLandscape || bookIdx === 0) {
+                    if (!isLandscape || this.isSinglePage) {
                         if (currentItem.isCover) label = `Portada (Pág. 1 de ${this.numPdfPages})`;
                         else if (currentItem.isBackCover) label = `Contraportada (Pág. ${this.numPdfPages} de ${this.numPdfPages})`;
                         else if (currentItem.isFiller) label = `Información Institucional`;
                         else label = `Página ${currentItem.pdfPage} de ${this.numPdfPages}`;
+                    } else if (bookIdx === 0) {
+                        label = `Portada (Pág. 1 de ${this.numPdfPages})`;
                     } else if (bookIdx === totalBook - 1) {
                         label = `Contraportada (Pág. ${this.numPdfPages} de ${this.numPdfPages})`;
                         activePdfPage = this.numPdfPages;
@@ -1690,15 +1818,49 @@
                 }
 
                 toggleSpreadMode() {
-                    this.forcedSinglePage = !this.forcedSinglePage;
-                    this.dom.spreadModeText.textContent = this.forcedSinglePage ? 'Página Simple' : 'Vista Doble';
-                    this.dom.btnSpreadMode.classList.toggle('active', this.forcedSinglePage);
+                    this.isSinglePage = !this.isSinglePage;
+                    this.updateSpreadModeUI();
 
                     if (this.pageFlip) {
-                        this.pageFlip.getSettings().minWidth = this.forcedSinglePage ? 99999 : 360;
-                        this.pageFlip.update();
+                        const targetMode = this.isSinglePage ? 'portrait' : 'landscape';
+                        const settings = this.pageFlip.getSettings();
+                        settings.usePortrait = this.isSinglePage;
+                        settings.minWidth = this.isSinglePage ? 99999 : 0;
+
+                        this.updateBookDimensions();
+                        this.pageFlip.updateOrientation(targetMode);
+
+                        const render = this.pageFlip.getRender();
+                        if (render) {
+                            render.orientation = targetMode;
+                            if (this.isSinglePage) {
+                                render.setLeftPage(null);
+                            }
+                        }
+
+                        this.currentOrientation = this.pageFlip.getOrientation() || targetMode;
+                        this.pageFlip.turnToPage(this.currentBookIndex);
                         this.updateControlsState();
                         this.loadVisiblePages();
+                    }
+                }
+
+                updateSpreadModeUI() {
+                    const icon = document.getElementById('icon-spread-mode');
+                    if (this.isSinglePage) {
+                        this.dom.spreadModeText.textContent = 'Pág. Simple';
+                        this.dom.btnSpreadMode.classList.remove('active');
+                        this.dom.btnSpreadMode.title = 'Cambiar a Vista Doble (Estilo Libro - 2 Páginas)';
+                        if (icon) {
+                            icon.innerHTML = '<path d="M14 2H6C4.9 2 4 2.9 4 4V20C4 21.1 4.9 22 6 22H18C19.1 22 20 21.1 20 20V8L14 2M18 20H6V4H13V9H18V20Z"/>';
+                        }
+                    } else {
+                        this.dom.spreadModeText.textContent = 'Vista Doble';
+                        this.dom.btnSpreadMode.classList.add('active');
+                        this.dom.btnSpreadMode.title = 'Cambiar a Página Simple (1 Página)';
+                        if (icon) {
+                            icon.innerHTML = '<path d="M19 2H5C3.9 2 3 2.9 3 4V20C3 21.1 3.9 22 5 22H19C20.1 22 21 21.1 21 20V4C21 2.9 20.1 2 19 2M19 20H13V4H19V20M11 20H5V4H11V20Z"/>';
+                        }
                     }
                 }
 
